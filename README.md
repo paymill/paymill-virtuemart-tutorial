@@ -27,7 +27,7 @@ In **line 436** (before the while loop ends) insert the following:
 <?php
 if ($db->f("payment_class") == "ps_paymill") {
     require_once( CLASSPATH . 'paymill.php');
-    paymill_form();
+    paymill_form($db->f("payment_method_id"));
 }
 ?>
 ```
