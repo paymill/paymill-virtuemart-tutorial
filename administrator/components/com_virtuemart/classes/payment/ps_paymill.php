@@ -95,6 +95,10 @@ class ps_paymill {
         // load config
         require_once( CLASSPATH."payment/".__CLASS__.".cfg.php" );  
 
+        // read the configuration for Paymill library
+        $paymillPrivateApiKey = PAYMILL_PRIVATE_KEY;
+        $paymillApiEndpoint = 'https://api.paymill.com/v2/';
+
         // get the paymill token from request
         $paymillToken = $_POST['paymill_token'];
 
@@ -103,14 +107,6 @@ class ps_paymill {
             return false;
         }
 
-        // load Paymill library
-        require_once(CLASSPATH . 'paymill/lib/Services/Paymill/Transactions.php');
-        require_once(CLASSPATH . 'paymill/lib/Services/Paymill/Creditcards.php');
-        require_once(CLASSPATH . 'paymill/lib/Services/Paymill/Clients.php');
-
-        // convert order amount
-        $amount = number_format(($order_total * 100), 0, '', '');
-
         // setup client params
         $user =& JFactory::getUser();
         $clientParams = array(
@@ -118,62 +114,132 @@ class ps_paymill {
             'description' => $user->name
         );
 
+        $libBase = CLASSPATH . '/paymill/v2/lib/';
+
+        // process the payment
+        $result = $this->_process_payment(array(
+            'token' => $paymillToken,
+            'amount' => round(($order_total * 100)),
+            'currency' => 'EUR',
+            'name' => $user->name,
+            'email' => $user->email,
+            'description' => $user->name,
+            'libBase' => $libBase,
+            'privateKey' => $paymillPrivateApiKey,
+            'apiUrl' => $paymillApiEndpoint,
+            'loggerCallback' => array('ps_paymill', 'logAction')
+        )); 
+
+        if (!$result) {
+            die("Fehler");
+        }
+
+        return true;
+    }
+
+    public function _process_payment($params) {  
+        
+        // setup the logger
+        $logger = $params['loggerCallback'];
+                       
+        // setup client params
+        $clientParams = array(
+            'email' => $params['email'],
+            'description' => $params['name']
+        );
+
         // setup credit card params
-        $creditcardParams = array(
-            'token' => $paymillToken
+        $paymentParams = array(
+            'token' => $params['token']
         );
 
         // setup transaction params
         $transactionParams = array(
-            'amount' => $amount,
-            'currency' => 'eur',
-            'description' => 'Order ' . $order_number
+            'amount' => $params['amount'],
+            'currency' => $params['currency'],
+            'description' => $params['description']
         );
+                
+        require_once $params['libBase'] . 'Services/Paymill/Transactions.php';
+        require_once $params['libBase'] . 'Services/Paymill/Clients.php';
+        require_once $params['libBase'] . 'Services/Paymill/Payments.php';
 
-        // read the configuration for Paymill library
-        $paymillPrivateApiKey = PAYMILL_PRIVATE_KEY;
-        $paymillApiEndpoint = 'https://api.paymill.de/v1/';
-
-        // Access objects for the Paymill API
         $clientsObject = new Services_Paymill_Clients(
-            $paymillPrivateApiKey, $paymillApiEndpoint
-        );
-        $creditcardsObject = new Services_Paymill_Creditcards(
-            $paymillPrivateApiKey, $paymillApiEndpoint
+            $params['privateKey'], $params['apiUrl']
         );
         $transactionsObject = new Services_Paymill_Transactions(
-            $paymillPrivateApiKey, $paymillApiEndpoint
+            $params['privateKey'], $params['apiUrl']
+        );
+        $paymentsObject = new Services_Paymill_Payments(
+            $params['privateKey'], $params['apiUrl']
         );
         
         // perform conection to the Paymill API and trigger the payment
         try {
-            // create card
-            $creditcard = $creditcardsObject->create($creditcardParams);
 
-            // create client
-            $clientParams['creditcard'] = $creditcard['id'];
             $client = $clientsObject->create($clientParams);
+            if (!isset($client['id'])) {
+                call_user_func_array($logger, array("No client created " . var_export($client, true) . "; " . var_export($params, true)));
+                return false;
+            } else {
+                call_user_func_array($logger, array("Client created: " . $client['id']));
+            }
+
+            // create card
+            $paymentParams['client'] = $client['id'];
+            $payment = $paymentsObject->create($paymentParams);
+            if (!isset($payment['id'])) {
+                call_user_func_array($logger, array("No payment (credit card) created: " . var_export($payment, true) . " with params " . var_export($paymentParams, true)));
+                return false;
+            } else {
+                call_user_func_array($logger, array("Payment (credit card) created: " . $payment['id']));
+            }            
 
             // create transaction
-            $transactionParams['client'] = $client['id'];
+            //$transactionParams['client'] = $client['id'];
+            $transactionParams['payment'] = $payment['id'];
             $transaction = $transactionsObject->create($transactionParams);
+            if (!isset($transaction['id'])) {
+                call_user_func_array($logger, array("No transaction created" . var_export($transaction, true)));
+                return false;
+            } else {
+                call_user_func_array($logger, array("Transaction created: " . $transaction['id']));
+            }
 
+            // check result
             if (is_array($transaction) && array_key_exists('status', $transaction)) {
                 if ($transaction['status'] == "closed") {
+                    // transaction was successfully issued
                     return true;
                 } elseif ($transaction['status'] == "open") {
-                  $vmLogger->err("Ihre Zahlung konnte nicht ausgeführt werden. Der Zahlungsstatus ist 'open'");
-                  return false;
+                    // transaction was issued but status is open for any reason
+                    call_user_func_array($logger, array("Status is open."));
+                    return false;
                 } else {
-                  $vmLogger->err("Ihre Zahlung konnte nicht ausgeführt werden.");
-                  return false;
+                    // another error occured
+                    call_user_func_array($logger, array("Unknown error." . var_export($transaction, true)));
+                    return false;
                 }
             } else {
+                // another error occured
+                call_user_func_array($logger, array("Transaction could not be issued."));
+                return false;
             }
+
         } catch (Services_Paymill_Exception $ex) {
-            $vmLogger->err("Ihre Zahlung konnte nicht ausgeführt werden: " . $ex->getMessage());
+            // paymill wrapper threw an exception
+            call_user_func_array($logger, array("Exception thrown from paymill wrapper: " . $ex->getMessage()));
             return false;
-        }  
+        }        
         return true;
+    }
+
+    public function logAction($message) {
+        $logfile = dirname(dirname(__FILE__)) . '/paymill/log.txt';
+        if (is_writable($logfile)) {
+            $handle = fopen($logfile, 'a');
+            fwrite($handle, "[" . date(DATE_RFC822) . "] " . $message . "\n");
+            fclose($handle);
+        }
     }
 }

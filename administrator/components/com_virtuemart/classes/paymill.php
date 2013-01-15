@@ -6,6 +6,8 @@
  * @param $paymillPaymentId The vm payment id of the paymill plugin 
  */
 function paymill_form($paymillPaymentId) {
+    global $ps_checkout;
+
     // read paymill configuration
     require_once(CLASSPATH . "payment/ps_paymill.cfg.php");
     ?>
@@ -62,15 +64,16 @@ function paymill_form($paymillPaymentId) {
     <script type="text/javascript">
         function PaymillResponseHandler(error, result) {
             if (error) {
-                console.log(error.apierror);
+                paymill_debug(error.apierror);
             } else {
-                console.log(result.token);
+                paymill_debug("Received token: " + result.token);
                 $('#paymill_token').val(result.token);
                 $('form[name="adminForm"]').get(0).submit();
             }
         }
         $('form[name="adminForm"]').submit(function() {
             if ($('input[name="payment_method_id"][value="<?php echo $paymillPaymentId; ?>"]').attr("checked") == "checked") {
+                paymill_debug("Started validation");
                 if (false == paymill.validateCardNumber($("#card-number").val())) {
                     $("#paymentErrors").html("<span style='color: #ff0000'>Ungültige Kartennummer</span>");
                     return false;
@@ -83,15 +86,23 @@ function paymill_form($paymillPaymentId) {
                     $("#paymentErrors").html("<span style='color: #ff0000'>Ungültiger CVC-Code</span>");
                     return false;
                 }
+                paymill_debug("Validation successful");
                 paymill.createToken({
                     number: $('#card-number').val(), 
                     exp_month: $('#card-expiry-month').val(),
                     exp_year: $('#card-expiry-year').val(), 
-                    cvc: $('#card-cvc').val()
+                    cvc: $('#card-cvc').val(),
+                    amount_int: <?php echo round(100 * $GLOBALS['order_total']); ?>,
+                    currency: "EUR"
                 }, PaymillResponseHandler);
                 return false;
             }
         }); 
+
+        // debug mode
+        function paymill_debug(message) {
+            console.log("[PaymillCC] " + message);
+        }
     </script>
 <?php
 }

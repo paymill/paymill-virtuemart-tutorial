@@ -1,4 +1,4 @@
-# Integration into VirtueMart 1.x
+# Integration into VirtueMart 1.x (currently only EUR supported)
 
 ## Copy the files to your VM installation
 
