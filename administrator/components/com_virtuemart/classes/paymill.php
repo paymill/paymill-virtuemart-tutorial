@@ -92,7 +92,7 @@ function paymill_form($paymillPaymentId) {
                     exp_month: $('#card-expiry-month').val(),
                     exp_year: $('#card-expiry-year').val(), 
                     cvc: $('#card-cvc').val(),
-                    amount_int: <?php echo round(100 * $GLOBALS['order_total']); ?>,
+                    amount_int: <?php echo round(100 * $GLOBALS['order_total']); ?>, 
                     currency: "EUR"
                 }, PaymillResponseHandler);
                 return false;
